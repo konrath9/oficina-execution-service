@@ -1,0 +1,176 @@
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/oficina-execution-service
+  NAMESPACE: oficina-mecanica
+  RABBITMQ_MANIFEST: https://raw.githubusercontent.com/konrath9/OficinaMecanica/master/k8s/rabbitmq.yaml
+
+jobs:
+  build-test:
+    name: Build, testes (cobertura >= 80%) e SonarCloud
+    runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # SonarCloud precisa do historico para blame/new code
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Cache pacotes NuGet
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: SonarCloud begin
+        if: env.SONAR_TOKEN != ''
+        run: |
+          dotnet tool install --global dotnet-sonarscanner
+          dotnet sonarscanner begin \
+            /k:"konrath9_oficina-execution-service" \
+            /o:"konrath9" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.token="$SONAR_TOKEN" \
+            /d:sonar.cs.opencover.reportsPaths="OficinaExecucao.Tests/TestResults/coverage.opencover.xml" \
+            /d:sonar.coverage.exclusions="**/Program.cs"
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Testes com gate de cobertura (linhas >= 80%)
+        run: >
+          dotnet test --no-build -c Release
+          /p:CollectCoverage=true /p:Threshold=80 /p:ThresholdType=line /p:CoverletOutputFormat=opencover
+
+      - name: SonarCloud end
+        if: env.SONAR_TOKEN != ''
+        run: dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
+
+      - name: SonarCloud ignorado
+        if: env.SONAR_TOKEN == ''
+        run: echo "::warning::SONAR_TOKEN nao configurado - analise do SonarCloud ignorada."
+
+  deploy-homologacao:
+    name: Imagem no GHCR + deploy em cluster kind efemero (smoke test)
+    runs-on: ubuntu-latest
+    needs: build-test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Login no GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build e push da imagem
+        run: |
+          docker build -t "$IMAGE_NAME:${{ github.sha }}" -t "$IMAGE_NAME:latest" .
+          docker push --all-tags "$IMAGE_NAME"
+
+      - name: Criar cluster kind
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: oficina-execucao
+
+      - name: Carregar imagem no kind
+        run: kind load docker-image "$IMAGE_NAME:${{ github.sha }}" --name oficina-execucao
+
+      - name: Aplicar RabbitMQ (do repo do orquestrador), MongoDB e a aplicacao
+        run: |
+          sed -i "s|$IMAGE_NAME:.*|$IMAGE_NAME:${{ github.sha }}|" k8s/deployment.yaml
+          kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f "$RABBITMQ_MANIFEST"
+          kubectl apply -f k8s/mongodb.yaml
+          kubectl apply -f k8s/
+
+      - name: Aguardar rollout
+        run: |
+          kubectl rollout status statefulset/mongodb -n "$NAMESPACE" --timeout=240s
+          kubectl rollout status deployment/oficina-execution-service -n "$NAMESPACE" --timeout=240s
+
+      - name: Smoke test (Swagger via port-forward)
+        run: |
+          kubectl port-forward svc/oficina-execution-service 8080:8080 -n "$NAMESPACE" &
+          sleep 5
+          curl -sf --retry 5 --retry-delay 3 --retry-all-errors http://localhost:8080/execucao/swagger/v1/swagger.json > /dev/null
+
+      - name: Diagnostico em caso de falha
+        if: failure()
+        run: |
+          kubectl get pods -n "$NAMESPACE" -o wide
+          kubectl logs deployment/oficina-execution-service -n "$NAMESPACE" --tail=100 || true
+
+  deploy-producao:
+    name: Deploy no cluster k3s de producao
+    runs-on: ubuntu-latest
+    needs: deploy-homologacao
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Configurar chave SSH do node k3s
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.K3S_SSH_PRIVATE_KEY }}" > ~/.ssh/k3s_ec2_key
+          chmod 600 ~/.ssh/k3s_ec2_key
+          ssh-keyscan -H "${{ secrets.K3S_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Apontar manifesto para a imagem publicada no GHCR
+        run: sed -i "s|$IMAGE_NAME:.*|$IMAGE_NAME:${{ github.sha }}|" k8s/deployment.yaml
+
+      - name: Gerar Secret de producao - k8s/secret.yaml e so o valor de demo
+        run: |
+          kubectl create secret generic oficina-execution-service-secrets \
+            --namespace "$NAMESPACE" \
+            --from-literal=Jwt__SecretKey="${{ secrets.PROD_JWT_SECRET_KEY }}" \
+            --from-literal=NewRelic__LicenseKey="${{ secrets.NEW_RELIC_LICENSE_KEY }}" \
+            --from-literal=RabbitMq__Password="${{ secrets.RABBITMQ_PASSWORD }}" \
+            --dry-run=client -o yaml > /tmp/prod-secret.yaml
+
+      - name: Copiar manifestos (exceto o secret de demo) e o secret de producao para o node k3s
+        run: |
+          ssh -i ~/.ssh/k3s_ec2_key ubuntu@${{ secrets.K3S_HOST }} "rm -rf /tmp/oficina-execucao-k8s && mkdir -p /tmp/oficina-execucao-k8s"
+          scp -i ~/.ssh/k3s_ec2_key $(ls k8s/*.yaml | grep -v '/secret\.yaml$') ubuntu@${{ secrets.K3S_HOST }}:/tmp/oficina-execucao-k8s/
+          scp -i ~/.ssh/k3s_ec2_key /tmp/prod-secret.yaml ubuntu@${{ secrets.K3S_HOST }}:/tmp/oficina-execucao-k8s/secret.yaml
+
+      - name: Aplicar manifestos no k3s e aguardar rollout
+        run: |
+          ssh -i ~/.ssh/k3s_ec2_key ubuntu@${{ secrets.K3S_HOST }} '
+            export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
+            kubectl create namespace oficina-mecanica --dry-run=client -o yaml | kubectl apply -f -
+            kubectl apply -f /tmp/oficina-execucao-k8s/
+            kubectl rollout status statefulset/mongodb -n oficina-mecanica --timeout=240s
+            kubectl rollout status deployment/oficina-execution-service -n oficina-mecanica --timeout=240s
+          '
+
+      - name: Smoke test via API Gateway (Traefik)
+        run: curl -sf --retry 6 --retry-delay 10 --retry-all-errors http://${{ secrets.K3S_HOST }}/execucao/swagger/v1/swagger.json > /dev/null
