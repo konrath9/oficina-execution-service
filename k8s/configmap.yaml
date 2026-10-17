@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: oficina-execution-service-config
+  namespace: oficina-mecanica
+data:
+  ASPNETCORE_ENVIRONMENT: "Production"
+  Jwt__Issuer: "OficinaMecanicaAPI"
+  Jwt__Audience: "OficinaMecanicaClients"
+  Mongo__ConnectionString: "mongodb://mongodb:27017"
+  Mongo__Database: "oficina_execucao"
+  RabbitMq__Host: "rabbitmq"
+  RabbitMq__Username: "oficina"

@@ -1,0 +1,26 @@
+# Traefik (host unico): /api/execucoes e /execucao (Swagger) vao para o Execution Service.
+# O resto continua no OS Service (ingress do repo OficinaMecanica). Auth JWT e feita pela propria API.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oficina-execution-service
+  namespace: oficina-mecanica
+spec:
+  ingressClassName: traefik
+  rules:
+    - http:
+        paths:
+          - path: /api/execucoes
+            pathType: Prefix
+            backend:
+              service:
+                name: oficina-execution-service
+                port:
+                  number: 8080
+          - path: /execucao
+            pathType: Prefix
+            backend:
+              service:
+                name: oficina-execution-service
+                port:
+                  number: 8080

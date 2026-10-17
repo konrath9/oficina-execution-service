@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oficina-execution-service
+  namespace: oficina-mecanica
+  labels:
+    app: oficina-execution-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oficina-execution-service
+  template:
+    metadata:
+      labels:
+        app: oficina-execution-service
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/konrath9/oficina-execution-service:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: oficina-execution-service-config
+            - secretRef:
+                name: oficina-execution-service-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            failureThreshold: 5
