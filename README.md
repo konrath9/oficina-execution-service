@@ -1,5 +1,11 @@
 # Oficina Mecânica — Execution Service
 
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=konrath9_oficina-execution-service&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service)
+[![Coverage](https://sonarcloud.io/api/project_badges/measure?project=konrath9_oficina-execution-service&metric=coverage)](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service)
+[![Bugs](https://sonarcloud.io/api/project_badges/measure?project=konrath9_oficina-execution-service&metric=bugs)](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service)
+[![Vulnerabilities](https://sonarcloud.io/api/project_badges/measure?project=konrath9_oficina-execution-service&metric=vulnerabilities)](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service)
+[![Code Smells](https://sonarcloud.io/api/project_badges/measure?project=konrath9_oficina-execution-service&metric=code_smells)](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service)
+
 Microsserviço de **fila de execução e produção** das ordens de serviço (Tech Challenge FIAP — Fase 4).
 Recebe da saga as OSs com pagamento aprovado, coloca na fila dos mecânicos e acompanha o diagnóstico,
 o reparo e a execução de cada serviço até a finalização (ou falha).
@@ -132,8 +138,7 @@ Fora da medição: `Program.cs` e o adaptador fino do driver (`MongoExecucaoRepo
 marcados com `[ExcludeFromCodeCoverage]`), que só fazem sentido contra um servidor MongoDB real — esse caminho é
 validado pelo deploy + smoke test no cluster `kind` do CI.
 
-SonarCloud: _[badge / print do quality gate — adicionar após a primeira análise]_
-<!-- [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=konrath9_oficina-execution-service&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service) -->
+> **SonarCloud:** análise e Quality Gate em [sonarcloud.io](https://sonarcloud.io/summary/new_code?id=konrath9_oficina-execution-service).
 
 ## CI/CD
 
