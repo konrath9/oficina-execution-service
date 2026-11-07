@@ -15,6 +15,7 @@ spec:
       labels:
         app: oficina-execution-service
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: api
           image: ghcr.io/konrath9/oficina-execution-service:latest
