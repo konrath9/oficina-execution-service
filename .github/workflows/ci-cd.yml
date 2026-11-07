@@ -179,6 +179,8 @@ jobs:
             export KUBECONFIG=/etc/rancher/k3s/k3s.yaml
             kubectl create namespace oficina-mecanica --dry-run=client -o yaml | kubectl apply -f -
             kubectl apply -f /tmp/oficina-execucao-k8s/
+            # Secret muda sem mudar a imagem: reinicia para os pods lerem os valores novos
+            kubectl rollout restart deployment/oficina-execution-service -n oficina-mecanica
             kubectl rollout status statefulset/mongodb -n oficina-mecanica --timeout=240s
             kubectl rollout status deployment/oficina-execution-service -n oficina-mecanica --timeout=240s
           '
